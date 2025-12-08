@@ -5,20 +5,27 @@
             "channel": 16,
             "param0": 16769,
             "param1": 257,
-            "time": 256
+            "time": 1024,
+            "duration": 1024
         },
         "embed": 240,
         "feed": 960,
         "heads": 8,
-        "token": 48,
-        "layers": 12
+        "token": 40,
+        "layers": 8
     },
     "dataset": {
         "tokenizer": {
             "minTimeResolution": 32
         },
-        "truncate": 1000
+        "sequenceLength": 1200
     },
-    "learningRate": 1e-3,
-    "batchSize": 32
+    "padding": {
+        "messageType": null,
+        "channel": null,
+        "param0": 16768,
+        "param1": 256,
+        "time": null,
+        "duration": 0
+    }
 }
