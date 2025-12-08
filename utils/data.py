@@ -5,6 +5,7 @@ import numpy as np
 from config import *
 
 import mido
+from mido import second2tick
 import itertools
 import matplotlib.pyplot as plt
 
@@ -12,10 +13,12 @@ import kagglehub
 import os
 from glob import glob
 
-os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
+# os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_default_device(DEVICE)
+
+ratios = []
 
 
 def discreteTokenizerFactory(config):
@@ -46,17 +49,29 @@ def discreteTokenizerFactory(config):
     maximums = {0: 16768, 1: 256}
 
     def tokenizeDiscrete(midiPath):
-        channels = {"messageType": [], "channel": [], "param0": [], "param1": [], "time": []}
+        channels = {"messageType": [], "channel": [], "param0": [], "param1": [], "time": [], "duration": []}
 
         mid = mido.MidiFile(midiPath, clip=True)
         ppq = mid.ticks_per_beat
         resolution = ppq / minimum
 
+        openNotes = {}
+        currentTime = 0
+        accumulatedTime = 0
+        tempo = 500000
+
         for msg in mid:
+            ticks = second2tick(msg.time, mid.ticks_per_beat, tempo)
+            currentTime += ticks
             messageType = msg.type
             if messageType not in labels:
+                if msg.time != 0:
+                    accumulatedTime += ticks
                 # print(msg)
                 continue
+
+            if msg.type == 'set_tempo':
+                tempo = msg.tempo
 
             messageParams = labels[messageType]
             params = []
@@ -68,9 +83,27 @@ def discreteTokenizerFactory(config):
                 else:
                     print("huh")
 
+            if messageType == "note_off" or (messageType == "note_on" and msg.velocity == 0):
+                if (msg.channel, msg.note) in openNotes and openNotes[(msg.channel, msg.note)] != []:
+                    index, start = openNotes[(msg.channel, msg.note)][-1]
+                    duration = currentTime - start
+                    channels["duration"][index] = round(duration / resolution)
+                    del openNotes[(msg.channel, msg.note)][-1]
+                    # print("huh found", msg.type)
+                continue
+
             channels["messageType"].append(list(labels.keys()).index(messageType))
             channels["channel"].append(msg.channel)
-            channels["time"].append(round(msg.time / resolution))
+            channels["time"].append(round((ticks + accumulatedTime) / resolution))
+            channels["duration"].append(0)
+            accumulatedTime = 0
+
+            if messageType == "note_on" and msg.velocity != 0:
+                note = (len(channels["messageType"]) - 1, currentTime)
+                if (msg.channel, msg.note) in openNotes:
+                    openNotes[(msg.channel, msg.note)].append(note)
+                else:
+                    openNotes[(msg.channel, msg.note)] = [note]
 
             for i in range(2):
                 if len(params) > i:
@@ -78,17 +111,24 @@ def discreteTokenizerFactory(config):
                 else:
                     channels[f"param{i}"].append(maximums[i])
 
+        # Fix any overhung notes
+        if len({key: value for key, value in openNotes.items() if value != []}) > 0:
+            for key in openNotes:
+                for note in openNotes[key]:
+                    index, start = note
+                    duration = currentTime - start
+                    channels["duration"][index] = round(duration / resolution)
+
+        ratios.append(len(channels["messageType"]) / mid.length)
+
         return channels
 
     return tokenizeDiscrete
 
 
 class LakhData(Dataset):
-    truncate = None
-
     def __init__(self, config):
         self.config = config
-        LakhData.truncate = self.config.truncate
 
         path = kagglehub.dataset_download("imsparsh/lakh-midi-clean")
         self.filePaths = glob(os.path.join(path, "**", "*.mid"))
@@ -99,17 +139,24 @@ class LakhData(Dataset):
         return len(self.filePaths)
 
     def __getitem__(self, item):
-        return self.tokenizer(self.filePaths[item])
+        data = self.tokenizer(self.filePaths[item])
+        if self.config.truncate != None:
+            for key in data:
+                channel = np.array(data[key])
+                if channel.shape[0] > self.config.truncate:
+                    data[key] = channel[:self.config.truncate]
+
+        return data
 
     @staticmethod
     def collate(samples):
         data = {}
 
         for key in samples[0]:
-            lists = [sample[key] for sample in samples]
+            # Gross
+            lists = [sample[key].tolist() for sample in samples]
             padded = list(zip(*itertools.zip_longest(*lists, fillvalue=0)))
             tensor = torch.tensor(np.array(padded, dtype=np.uint16), dtype=torch.long)
-            tensor = tensor[:, :LakhData.truncate]
             data[key] = tensor
 
         maxLength = max([len(sample["messageType"]) for sample in samples])
@@ -118,8 +165,6 @@ class LakhData(Dataset):
             length = len(samples[s]["messageType"])
             if maxLength != length:
                 mask[s, -(maxLength - length):] = 1
-
-        mask = mask[:, :LakhData.truncate]
 
         collated = {"sequences": data, "mask": mask}
 
@@ -138,7 +183,7 @@ class VGData(Dataset):
 
 
 if __name__ == "__main__":
-    dataset = LakhData(Config().load(os.path.join("..", "configs", "config.json")).dataset)
+    dataset = LakhData(Config().load(os.path.join("configs", "config.json")).dataset)
     batch = LakhData.collate([dataset[i] for i in range(128)])
     lengths = (batch["mask"].shape[1] - torch.sum(batch["mask"], dim=1)).cpu().numpy()
 
@@ -147,3 +192,19 @@ if __name__ == "__main__":
 
     plt.hist(batch["sequences"]["messageType"].flatten().cpu().numpy())
     plt.show()
+
+    plt.hist(batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]].cpu().numpy())
+    plt.show()
+
+    plt.hist((batch["sequences"]["time"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy())
+    plt.show()
+
+    plt.hist((batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy())
+    plt.show()
+
+    print((batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]] == 0).cpu().numpy().sum())
+
+    plt.hist(dataset.config.truncate / np.array(ratios))
+    plt.show()
+
+    print((dataset.config.truncate / np.array(ratios)).mean())
