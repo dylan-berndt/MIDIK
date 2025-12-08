@@ -16,7 +16,15 @@
     },
     "dataset": {
         "tokenizer": {
-            "minTimeResolution": 32
+            "minTimeResolution": 32,
+            "ranges": {
+                "messageType": 16,
+                "channel": 16,
+                "param0": 16769,
+                "param1": 257,
+                "time": 1024,
+                "duration": 1024
+            }
         },
         "sequenceLength": 1200
     },
@@ -27,5 +35,7 @@
         "param1": 256,
         "time": null,
         "duration": 0
-    }
+    },
+    "batchSize": 16,
+    "learningRate": 1e-3
 }

@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, Subset
 import numpy as np
 
-from config import *
+from .config import *
 
 import mido
 from mido import second2tick
@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import kagglehub
 import os
 from glob import glob
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
 
@@ -23,6 +25,7 @@ ratios = []
 
 def discreteTokenizerFactory(config):
     minimum = config.minTimeResolution / 4
+    ranges = config.ranges
 
     labels = {
         "note_on": ["velocity", "note"],
@@ -119,16 +122,32 @@ def discreteTokenizerFactory(config):
                     duration = currentTime - start
                     channels["duration"][index] = round(duration / resolution)
 
+        for key in channels:
+            for i in range(len(channels[key])):
+                if channels[key][i] >= ranges[key]:
+                    channels[key][i] = ranges[key] - 1
+                if channels[key][i] < 0:
+                    channels[key][i] = 0
+
         ratios.append(len(channels["messageType"]) / mid.length)
 
         return channels
 
-    return tokenizeDiscrete
+    def tokenizeProtected(midiPath):
+        try:
+            return tokenizeDiscrete(midiPath)
+        # Why do you gotta do me like that
+        except (OSError, ValueError, EOFError, mido.KeySignatureError):
+            return None
+
+    return tokenizeProtected
 
 
 class LakhData(Dataset):
-    def __init__(self, config, location="lakh"):
+    def __init__(self, config, location="lakh", fixMissing=True):
+        location = os.path.join("..", location) if os.getcwd().endswith("utils") else location
         self.config = config
+        self.seqLength = self.config.sequenceLength
 
         self.tokenizer = discreteTokenizerFactory(config.tokenizer)
 
@@ -137,13 +156,20 @@ class LakhData(Dataset):
 
         existing = [os.path.exists(os.path.join(location, os.path.basename(path).removesuffix(".mid") + ".json")) for path in self.midiPaths]
 
-        missing = np.array(self.midiPaths)[np.array(existing)]
-        for f, filePath in enumerate(missing):
-            data = self.tokenizer(filePath)
-            savePath = os.path.join(location, os.path.basename(filePath).removesuffix(".mid") + ".json")
-            with open(savePath, "w") as file:
-                json.dump(file, data)
-            print(f"{f + 1}/{len(missing)} MIDIs tokenized")
+        missing = np.array(self.midiPaths)[~np.array(existing)]
+        if not os.path.exists(location):
+            os.mkdir(location)
+
+        if fixMissing:
+            for p, path in enumerate(missing):
+                data = self.tokenizer(path)
+                if data is None:
+                    continue
+                savePath = os.path.join(location, os.path.basename(path).removesuffix(".mid") + ".json")
+                with open(savePath, "w+") as file:
+                    json.dump(data, file)
+
+                print(f"\r{p + 1}/{len(missing)} MIDIs tokenized", end="")
 
         self.jsonPaths = glob(os.path.join(location, "*.json"))
         self.tokens = []
@@ -159,54 +185,44 @@ class LakhData(Dataset):
 
         self.lengths = np.array(self.lengths)
 
+        print(np.sum(self.lengths), "tokens in dataset")
+        # print(f"{(np.array(ratios) / self.seqLength).mean():.2f} average seconds per {self.seqLength} token sequence")
+
     def __len__(self):
-        return np.sum(self.lengths - self.config.sequenceLength)
+        return np.sum(self.lengths - self.seqLength)
 
     def __getitem__(self, item):
         song = 0
         offset = item
-        while self.lengths[song] - self.config.sequenceLength < offset:
-            offset -= self.lengths[song] - self.config.sequenceLength
+        while self.lengths[song] - self.seqLength < offset:
+            offset -= self.lengths[song] - self.seqLength
             song += 1
 
         data = self.tokens[song]
-        if self.config.sequenceLength != None:
-            for key in data:
-                channel = np.array(data[key])
-                data[key] = channel[offset: offset + self.config.sequenceLength]
+        sampled = {}
+        for key in data:
+            channel = np.array(data[key])
+            sampled[key] = channel[offset: offset + self.seqLength]
 
-        return data
+        return sampled
 
     @staticmethod
     def collate(samples):
         data = {}
 
-        # TODO: Change collate for fixed length sequences
         for key in samples[0]:
-            # Gross
-            lists = [sample[key].tolist() for sample in samples]
-            padded = list(zip(*itertools.zip_longest(*lists, fillvalue=0)))
-            tensor = torch.tensor(np.array(padded, dtype=np.uint16), dtype=torch.long)
+            lists = [sample[key] for sample in samples]
+            tensor = torch.tensor(np.array(lists), dtype=torch.long)
             data[key] = tensor
 
-        maxLength = max([len(sample["messageType"]) for sample in samples])
-        mask = torch.zeros_like(data["messageType"], dtype=torch.bool)
-        for s in range(len(samples)):
-            length = len(samples[s]["messageType"])
-            if maxLength != length:
-                mask[s, -(maxLength - length):] = 1
-
-        collated = {"sequences": data, "mask": mask}
+        collated = {"sequences": data}
 
         return collated
 
 
-class VGData(Dataset):
-    def __init__(self):
-        pass
-
-    def __len__(self):
-        pass
+class VGData(LakhData):
+    def __init__(self, config, location="vg", fixMissing=True):
+        super().__init__(config, location, fixMissing)
 
     def __getitem__(self, item):
         pass
@@ -214,32 +230,27 @@ class VGData(Dataset):
 
 if __name__ == "__main__":
     root = ".." if os.getcwd().endswith("utils") else ""
-    dataset = LakhData(Config().load(os.path.join(root, "configs", "config.json")).dataset)
+    dataset = LakhData(Config().load(os.path.join(root, "configs", "config.json")).dataset, fixMissing=False)
     batch = LakhData.collate([dataset[i] for i in range(128)])
-    lengths = (batch["mask"].shape[1] - torch.sum(batch["mask"], dim=1)).cpu().numpy()
-
-    plt.title("Song Lengths (Tokens)")
-    plt.hist(lengths)
-    plt.show()
 
     plt.title("Message Types")
     plt.hist(batch["sequences"]["messageType"].flatten().cpu().numpy())
     plt.show()
 
-    plt.hist(batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]].cpu().numpy())
+    plt.hist(batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0].cpu().numpy())
     plt.show()
 
-    time = (batch["sequences"]["time"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy()
+    time = (batch["sequences"]["time"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(time)
     plt.show()
     print(np.mean(time > 1024))
 
-    duration = (batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy()
+    duration = (batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(duration)
     plt.show()
     print(np.mean(duration > 1024))
 
-    print((batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]] == 0).cpu().numpy().sum())
+    print((batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0] == 0).cpu().numpy().sum())
 
     plt.hist(dataset.config.truncate / np.array(ratios))
     plt.show()

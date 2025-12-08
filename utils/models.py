@@ -40,12 +40,10 @@ class MIDIK(nn.Module):
 
         self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val) for key, val in config.ranges.items()})
 
-    def forward(self, inputs):
-        sequences, mask = inputs["sequences"], inputs["mask"]
-
+    def forward(self, inputs, context=None):
         x = None
-        for key in sequences:
-            embed = self.embedding[key](sequences[key])
+        for key in inputs:
+            embed = self.embedding[key](inputs[key])
             if x is None:
                 x = embed
             else:
@@ -54,19 +52,19 @@ class MIDIK(nn.Module):
         x = self.positional(x)
 
         def wrap(layer):
-            def forward(y, src_kpm):
-                src_mask = nn.Transformer.generate_square_subsequent_mask(y.shape[1], dtype=torch.bool)
-                return layer(y, src_mask=src_mask, src_key_padding_mask=src_kpm)
+            def forward(y):
+                src_mask = nn.Transformer.generate_square_subsequent_mask(y.shape[1], device=y.device)
+                return layer(y, src_mask=src_mask)
             return forward
 
         output = x
         for l in self.layers:
-            output = cp.checkpoint(
-                wrap(l),
-                output,
-                mask,
-                use_reentrant=True
-            )
+            # output = cp.checkpoint(
+            #     wrap(l),
+            #     output,
+            #     use_reentrant=True
+            # )
+            output = wrap(l)(output)
 
         x = self.norm(output)
         outputs = {key: value(x) for key, value in self.heads.items()}
@@ -77,9 +75,12 @@ class MIDIK(nn.Module):
 if __name__ == "__main__":
     from data import *
 
-    config = Config().load(os.path.join("..", "configs", "config.json"))
-    dataset = LakhData(config.dataset)
-    batch = LakhData.collate([dataset[i] for i in range(32)])
+    root = ".." if os.getcwd().endswith("utils") else ""
+
+    config = Config().load(os.path.join(root, "configs", "config.json"))
+    dataset = LakhData(config.dataset, fixMissing=False)
+
+    batch = LakhData.collate([dataset[i] for i in range(64)])
 
     model = MIDIK(config.model)
 
