@@ -127,24 +127,53 @@ def discreteTokenizerFactory(config):
 
 
 class LakhData(Dataset):
-    def __init__(self, config):
+    def __init__(self, config, location="lakh"):
         self.config = config
-
-        path = kagglehub.dataset_download("imsparsh/lakh-midi-clean")
-        self.filePaths = glob(os.path.join(path, "**", "*.mid"))
 
         self.tokenizer = discreteTokenizerFactory(config.tokenizer)
 
+        path = kagglehub.dataset_download("imsparsh/lakh-midi-clean")
+        self.midiPaths = glob(os.path.join(path, "**", "*.mid"))
+
+        existing = [os.path.exists(os.path.join(location, os.path.basename(path).removesuffix(".mid") + ".json")) for path in self.midiPaths]
+
+        missing = np.array(self.midiPaths)[np.array(existing)]
+        for f, filePath in enumerate(missing):
+            data = self.tokenizer(filePath)
+            savePath = os.path.join(location, os.path.basename(filePath).removesuffix(".mid") + ".json")
+            with open(savePath, "w") as file:
+                json.dump(file, data)
+            print(f"{f + 1}/{len(missing)} MIDIs tokenized")
+
+        self.jsonPaths = glob(os.path.join(location, "*.json"))
+        self.tokens = []
+        self.lengths = []
+
+        for t, tokenPath in enumerate(self.jsonPaths):
+            with open(tokenPath, "r") as file:
+                data = json.load(file)
+            if len(data["messageType"]) < self.config.sequenceLength:
+                continue
+            self.tokens.append(data)
+            self.lengths.append(len(data["messageType"]))
+
+        self.lengths = np.array(self.lengths)
+
     def __len__(self):
-        return len(self.filePaths)
+        return np.sum(self.lengths - self.config.sequenceLength)
 
     def __getitem__(self, item):
-        data = self.tokenizer(self.filePaths[item])
-        if self.config.truncate != None:
+        song = 0
+        offset = item
+        while self.lengths[song] - self.config.sequenceLength < offset:
+            offset -= self.lengths[song] - self.config.sequenceLength
+            song += 1
+
+        data = self.tokens[song]
+        if self.config.sequenceLength != None:
             for key in data:
                 channel = np.array(data[key])
-                if channel.shape[0] > self.config.truncate:
-                    data[key] = channel[:self.config.truncate]
+                data[key] = channel[offset: offset + self.config.sequenceLength]
 
         return data
 
@@ -152,6 +181,7 @@ class LakhData(Dataset):
     def collate(samples):
         data = {}
 
+        # TODO: Change collate for fixed length sequences
         for key in samples[0]:
             # Gross
             lists = [sample[key].tolist() for sample in samples]
@@ -183,7 +213,8 @@ class VGData(Dataset):
 
 
 if __name__ == "__main__":
-    dataset = LakhData(Config().load(os.path.join("configs", "config.json")).dataset)
+    root = ".." if os.getcwd().endswith("utils") else ""
+    dataset = LakhData(Config().load(os.path.join(root, "configs", "config.json")).dataset)
     batch = LakhData.collate([dataset[i] for i in range(128)])
     lengths = (batch["mask"].shape[1] - torch.sum(batch["mask"], dim=1)).cpu().numpy()
 
@@ -196,11 +227,15 @@ if __name__ == "__main__":
     plt.hist(batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]].cpu().numpy())
     plt.show()
 
-    plt.hist((batch["sequences"]["time"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy())
+    time = (batch["sequences"]["time"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy()
+    plt.hist(time)
     plt.show()
+    print(np.mean(time > 1024))
 
-    plt.hist((batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy())
+    duration = (batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0 & batch["mask"]]).cpu().numpy()
+    plt.hist(duration)
     plt.show()
+    print(np.mean(duration > 1024))
 
     print((batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0 & batch["mask"]] == 0).cpu().numpy().sum())
 

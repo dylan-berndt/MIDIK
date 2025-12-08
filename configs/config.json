@@ -18,7 +18,7 @@
         "tokenizer": {
             "minTimeResolution": 32
         },
-        "truncate": 1200
+        "sequenceLength": 1200
     },
     "padding": {
         "messageType": null,
