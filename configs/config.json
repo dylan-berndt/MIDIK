@@ -11,12 +11,14 @@
         "feed": 960,
         "heads": 8,
         "token": 48,
-        "layers": 8
+        "layers": 12
     },
     "dataset": {
         "tokenizer": {
             "minTimeResolution": 32
         },
         "truncate": 1000
-    }
+    },
+    "learningRate": 1e-3,
+    "batchSize": 32
 }

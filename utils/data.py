@@ -17,6 +17,8 @@ os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_default_device(DEVICE)
 
+ratios = []
+
 
 def discreteTokenizerFactory(config):
     minimum = config.minTimeResolution / 4
@@ -77,6 +79,8 @@ def discreteTokenizerFactory(config):
                     channels[f"param{i}"].append(params[i])
                 else:
                     channels[f"param{i}"].append(maximums[i])
+
+        ratios.append(len(channels["messageType"]) / mid.length)
 
         return channels
 
@@ -142,8 +146,14 @@ if __name__ == "__main__":
     batch = LakhData.collate([dataset[i] for i in range(128)])
     lengths = (batch["mask"].shape[1] - torch.sum(batch["mask"], dim=1)).cpu().numpy()
 
+    plt.title("Song Lengths (Tokens)")
     plt.hist(lengths)
     plt.show()
 
+    plt.title("Message Types")
     plt.hist(batch["sequences"]["messageType"].flatten().cpu().numpy())
+    plt.show()
+
+    plt.title("Tokens/Second Ratio Distribution")
+    plt.hist(ratios)
     plt.show()
