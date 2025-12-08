@@ -1,0 +1,22 @@
+{
+    "model": {
+        "ranges": {
+            "messageType": 16,
+            "channel": 16,
+            "param0": 16769,
+            "param1": 257,
+            "time": 256
+        },
+        "embed": 240,
+        "feed": 960,
+        "heads": 8,
+        "token": 48,
+        "layers": 8
+    },
+    "dataset": {
+        "tokenizer": {
+            "minTimeResolution": 32
+        },
+        "truncate": 1000
+    }
+}
