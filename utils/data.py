@@ -77,7 +77,10 @@ def discreteTokenizerFactory(config):
                     messageParam = param.split("_")[0]
                 if hasattr(msg, messageParam):
                     value = getattr(msg, messageParam)
-                    discretized = int(value)
+                    if messageParam != "pitch":
+                        discretized = int(value)
+                    else:
+                        discretized = (value + 8192) // 8
                     channels[param].append(discretized)
                 else:
                     print("huh")
