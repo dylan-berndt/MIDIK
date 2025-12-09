@@ -29,25 +29,36 @@ class MIDIK(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        encoder = nn.TransformerEncoderLayer(config.embed, config.heads, config.feed, batch_first=True)
+        self.embedding = nn.ModuleDict({key: nn.Embedding(val + 1, config.token) for key, val in config.ranges.items()})
 
-        self.embedding = nn.ModuleDict({key: nn.Embedding(val, config.token) for key, val in config.ranges.items()})
+        self.squeeze = nn.Sequential(
+            nn.Linear(len(config.ranges.keys()) * config.token, config.embed * 2),
+            nn.ReLU(),
+            nn.Linear(config.embed * 2, config.embed)
+        )
 
         self.positional = RotaryEncoding(config.embed, max_len=4e4, batch_first=True)
+
+        encoder = nn.TransformerEncoderLayer(config.embed, config.heads, config.feed, batch_first=True)
 
         self.layers = nn.ModuleList([encoder for _ in range(config.layers)])
         self.norm = nn.LayerNorm(config.embed)
 
-        self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val) for key, val in config.ranges.items()})
+        self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val + 1) for key, val in config.ranges.items()})
 
     def forward(self, inputs, context=None):
         x = None
         for key in inputs:
             embed = self.embedding[key](inputs[key])
+            # print(key, embed.shape)
             if x is None:
                 x = embed
             else:
                 x = torch.cat([x, embed], dim=-1)
+
+        # print(x.shape)
+
+        x = self.squeeze(x)
 
         x = self.positional(x)
 
@@ -74,6 +85,7 @@ class MIDIK(nn.Module):
 
 if __name__ == "__main__":
     from data import *
+    from config import *
 
     root = ".." if os.getcwd().endswith("utils") else ""
 
@@ -84,4 +96,4 @@ if __name__ == "__main__":
 
     model = MIDIK(config.model)
 
-    outputs = model(batch)
+    outputs = model(batch["sequences"])

@@ -3,15 +3,21 @@
         "ranges": {
             "messageType": 16,
             "channel": 16,
-            "param0": 16769,
-            "param1": 257,
+            "note": 128,
+            "velocity": 128,
+            "pitch": 16384,
             "time": 1024,
-            "duration": 1024
+            "duration": 2048,
+            "control": 128,
+            "program": 128,
+            "value_1": 128,
+            "value_2": 128,
+            "value_3": 128
         },
-        "embed": 240,
-        "feed": 960,
+        "embed": 256,
+        "feed": 1024,
         "heads": 8,
-        "token": 40,
+        "token": 64,
         "layers": 8
     },
     "dataset": {
@@ -20,10 +26,30 @@
             "ranges": {
                 "messageType": 16,
                 "channel": 16,
-                "param0": 16769,
-                "param1": 257,
+                "note": 128,
+                "velocity": 128,
+                "pitch": 16384,
                 "time": 1024,
-                "duration": 1024
+                "duration": 2048,
+                "control": 128,
+                "program": 128,
+                "value_1": 128,
+                "value_2": 128,
+                "value_3": 128
+            },
+            "padding": {
+                "messageType": null,
+                "channel": null,
+                "note": 128,
+                "velocity": 128,
+                "pitch": 16384,
+                "time": null,
+                "duration": 0,
+                "control": 128,
+                "program": 128,
+                "value_1": 128,
+                "value_2": 128,
+                "value_3": 128
             }
         },
         "sequenceLength": 1200
@@ -31,10 +57,16 @@
     "padding": {
         "messageType": null,
         "channel": null,
-        "param0": 16768,
-        "param1": 256,
+        "note": 128,
+        "velocity": 128,
+        "pitch": 16384,
         "time": null,
-        "duration": 0
+        "duration": 0,
+        "control": 128,
+        "program": 128,
+        "value_1": 128,
+        "value_2": 128,
+        "value_3": 128
     },
     "batchSize": 16,
     "learningRate": 1e-3

@@ -1,8 +1,8 @@
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset
 import numpy as np
-
-from .config import *
+import json
+import pandas as pd
 
 import mido
 from mido import second2tick
@@ -15,44 +15,29 @@ from glob import glob
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
+# os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 torch.set_default_device(DEVICE)
-
-ratios = []
 
 
 def discreteTokenizerFactory(config):
     minimum = config.minTimeResolution / 4
     ranges = config.ranges
+    padding = config.padding
 
     labels = {
         "note_on": ["velocity", "note"],
         "note_off": ["velocity", "note"],
-        "polytouch": ["value", "note"],
-        "control_change": ["value", "control"],
+        "polytouch": ["value_1", "note"],
+        "control_change": ["value_2", "control"],
         "program_change": ["program"],
-        "aftertouch": ["value"],
+        "aftertouch": ["value_3"],
         "pitchwheel": ["pitch"]
     }
 
-    discretization = {
-        "channel": lambda x: int(x),
-
-        "velocity": lambda x: int(x),
-        "value": lambda x: int(x + 128),
-        "program": lambda x: int(x + 256),
-        "pitch": lambda x: int(x + 8192 + 384),
-
-        "note": lambda x: int(x),
-        "control": lambda x: int(x + 128)
-    }
-
-    maximums = {0: 16768, 1: 256}
-
     def tokenizeDiscrete(midiPath):
-        channels = {"messageType": [], "channel": [], "param0": [], "param1": [], "time": [], "duration": []}
+        channels = {key: [] for key in ranges.keys()}
 
         mid = mido.MidiFile(midiPath, clip=True)
         ppq = mid.ticks_per_beat
@@ -76,16 +61,6 @@ def discreteTokenizerFactory(config):
             if msg.type == 'set_tempo':
                 tempo = msg.tempo
 
-            messageParams = labels[messageType]
-            params = []
-            for param in messageParams:
-                if hasattr(msg, param):
-                    value = getattr(msg, param)
-                    discretized = discretization[param](value)
-                    params.append(discretized)
-                else:
-                    print("huh")
-
             if messageType == "note_off" or (messageType == "note_on" and msg.velocity == 0):
                 if (msg.channel, msg.note) in openNotes and openNotes[(msg.channel, msg.note)] != []:
                     index, start = openNotes[(msg.channel, msg.note)][-1]
@@ -94,6 +69,18 @@ def discreteTokenizerFactory(config):
                     del openNotes[(msg.channel, msg.note)][-1]
                     # print("huh found", msg.type)
                 continue
+
+            messageParams = labels[messageType]
+            for param in messageParams:
+                messageParam = param
+                if "_" in param:
+                    messageParam = param.split("_")[0]
+                if hasattr(msg, messageParam):
+                    value = getattr(msg, messageParam)
+                    discretized = int(value)
+                    channels[param].append(discretized)
+                else:
+                    print("huh")
 
             channels["messageType"].append(list(labels.keys()).index(messageType))
             channels["channel"].append(msg.channel)
@@ -108,11 +95,9 @@ def discreteTokenizerFactory(config):
                 else:
                     openNotes[(msg.channel, msg.note)] = [note]
 
-            for i in range(2):
-                if len(params) > i:
-                    channels[f"param{i}"].append(params[i])
-                else:
-                    channels[f"param{i}"].append(maximums[i])
+            for channel in channels.keys():
+                if len(channels[channel]) < len(channels["messageType"]):
+                    channels[channel].append(ranges[channel])
 
         # Fix any overhung notes
         if len({key: value for key, value in openNotes.items() if value != []}) > 0:
@@ -125,13 +110,16 @@ def discreteTokenizerFactory(config):
         for key in channels:
             for i in range(len(channels[key])):
                 if channels[key][i] >= ranges[key]:
-                    channels[key][i] = ranges[key] - 1
+                    if padding[key] is None:
+                        channels[key][i] = ranges[key] - 1
+                    else:
+                        channels[key][i] = padding[key]
                 if channels[key][i] < 0:
                     channels[key][i] = 0
 
-        ratios.append(len(channels["messageType"]) / mid.length)
+        context = {"length": [mid.length], "tokens": [len(channels["messageType"])]}
 
-        return channels
+        return channels, context
 
     def tokenizeProtected(midiPath):
         try:
@@ -160,16 +148,34 @@ class LakhData(Dataset):
         if not os.path.exists(location):
             os.mkdir(location)
 
+        context = pd.DataFrame({"length": [], "tokens": []})
+        try:
+            oldContext = pd.read_csv(os.path.join(location, "context.csv"))
+            context = pd.concat([oldContext, context])
+        except Exception:
+            pass
+
         if fixMissing:
             for p, path in enumerate(missing):
-                data = self.tokenizer(path)
-                if data is None:
-                    continue
-                savePath = os.path.join(location, os.path.basename(path).removesuffix(".mid") + ".json")
-                with open(savePath, "w+") as file:
-                    json.dump(data, file)
+                try:
+                    data, newContext = self.tokenizer(path)
+                    if data is None:
+                        continue
+                    savePath = os.path.join(location, os.path.basename(path).removesuffix(".mid") + ".json")
+                    if len(context) == 0:
+                        context = pd.DataFrame(newContext)
+                    else:
+                        context = pd.concat([context, pd.DataFrame(newContext)], ignore_index=True)
+                    with open(savePath, "w+") as file:
+                        json.dump(data, file)
+                except KeyboardInterrupt:
+                    context.to_csv(os.path.join(location, "context.csv"))
+                    raise KeyboardInterrupt
 
                 print(f"\r{p + 1}/{len(missing)} MIDIs tokenized", end="")
+
+        self.context = context
+        context.to_csv(os.path.join(location, "context.csv"))
 
         self.jsonPaths = glob(os.path.join(location, "*.json"))
         self.tokens = []
@@ -229,30 +235,36 @@ class VGData(LakhData):
 
 
 if __name__ == "__main__":
+    from config import *
+
     root = ".." if os.getcwd().endswith("utils") else ""
     dataset = LakhData(Config().load(os.path.join(root, "configs", "config.json")).dataset, fixMissing=False)
-    batch = LakhData.collate([dataset[i] for i in range(128)])
+    loader = DataLoader(dataset, batch_size=128, collate_fn=LakhData.collate, shuffle=True)
+
+    batch = next(iter(loader))
 
     plt.title("Message Types")
     plt.hist(batch["sequences"]["messageType"].flatten().cpu().numpy())
     plt.show()
 
-    plt.hist(batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0].cpu().numpy())
+    plt.hist(batch["sequences"]["velocity"][batch["sequences"]["messageType"] == 0].cpu().numpy())
     plt.show()
 
     time = (batch["sequences"]["time"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(time)
     plt.show()
     print(np.mean(time > 1024))
+    print(np.unique_counts(time))
 
     duration = (batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(duration)
     plt.show()
     print(np.mean(duration > 1024))
+    print(np.unique_counts(duration))
 
-    print((batch["sequences"]["param0"][batch["sequences"]["messageType"] == 0] == 0).cpu().numpy().sum())
+    print((batch["sequences"]["velocity"][batch["sequences"]["messageType"] == 0] == 0).cpu().numpy().sum())
 
-    plt.hist(dataset.config.truncate / np.array(ratios))
+    plt.hist(dataset.config.sequenceLength / (dataset.context.tokens / dataset.context.length))
     plt.show()
 
-    print((dataset.config.truncate / np.array(ratios)).mean())
+    print((dataset.config.sequenceLength / (dataset.context.tokens / dataset.context.length)).mean())
