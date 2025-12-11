@@ -49,8 +49,8 @@ class MIDIK(nn.Module):
     def forward(self, inputs, context=None):
         x = None
         for key in inputs:
+            # print(key, torch.amax(inputs[key]))
             embed = self.embedding[key](inputs[key])
-            # print(key, embed.shape)
             if x is None:
                 x = embed
             else:
