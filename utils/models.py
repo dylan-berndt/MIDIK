@@ -29,6 +29,8 @@ class MIDIK(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.config = config
+
         self.embedding = nn.ModuleDict({key: nn.Embedding(val + 1, config.token) for key, val in config.ranges.items()})
 
         self.squeeze = nn.Sequential(
@@ -39,9 +41,9 @@ class MIDIK(nn.Module):
 
         self.positional = RotaryEncoding(config.embed, max_len=4e4, batch_first=True)
 
-        encoder = nn.TransformerEncoderLayer(config.embed, config.heads, config.feed, batch_first=True)
+        encoder = lambda x: nn.TransformerEncoderLayer(config.embed, config.heads, config.feed, batch_first=True)
 
-        self.layers = nn.ModuleList([encoder for _ in range(config.layers)])
+        self.layers = nn.ModuleList([encoder(_) for _ in range(config.layers)])
         self.norm = nn.LayerNorm(config.embed)
 
         self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val + 1) for key, val in config.ranges.items()})
@@ -51,6 +53,7 @@ class MIDIK(nn.Module):
         for key in inputs:
             # print(key, torch.amax(inputs[key]))
             embed = self.embedding[key](inputs[key])
+            embed[inputs[key] == self.config.ranges[key]] = 0
             if x is None:
                 x = embed
             else:

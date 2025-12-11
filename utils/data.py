@@ -134,6 +134,29 @@ def discreteTokenizerFactory(config):
     return tokenizeProtected
 
 
+def untokenizeFactory(config):
+    minimum = config.minTimeResolution / 4
+    ranges = config.ranges
+    padding = config.padding
+
+    labels = {
+        "note_on": ["velocity", "note"],
+        "note_off": ["velocity", "note"],
+        "polytouch": ["value_1", "note"],
+        "control_change": ["value_2", "control"],
+        "program_change": ["program"],
+        "aftertouch": ["value_3"],
+        "pitchwheel": ["pitch"]
+    }
+
+    def detokenize(channels):
+        openNotes = {}
+        for i in range(len(channels["messageType"])):
+            pass
+
+    return detokenize
+
+
 class LakhData(Dataset):
     def __init__(self, config, location="lakh", fixMissing=True):
         location = os.path.join("..", location) if os.getcwd().endswith("utils") else location
@@ -250,15 +273,18 @@ if __name__ == "__main__":
     plt.hist(batch["sequences"]["messageType"].flatten().cpu().numpy())
     plt.show()
 
+    plt.title("Velocity")
     plt.hist(batch["sequences"]["velocity"][batch["sequences"]["messageType"] == 0].cpu().numpy())
     plt.show()
 
+    plt.title("Time")
     time = (batch["sequences"]["time"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(time)
     plt.show()
     print(np.mean(time > 1024))
     print(np.unique_counts(time))
 
+    plt.title("Duration")
     duration = (batch["sequences"]["duration"][batch["sequences"]["messageType"] == 0]).cpu().numpy()
     plt.hist(duration)
     plt.show()
@@ -267,7 +293,12 @@ if __name__ == "__main__":
 
     print((batch["sequences"]["velocity"][batch["sequences"]["messageType"] == 0] == 0).cpu().numpy().sum())
 
+    plt.title("Song Length Encoding (s)")
     plt.hist(dataset.config.sequenceLength / (dataset.context.tokens / dataset.context.length))
+    plt.show()
+
+    plt.title("Song Length (tokens)")
+    plt.hist(dataset.context.length)
     plt.show()
 
     print((dataset.config.sequenceLength / (dataset.context.tokens / dataset.context.length)).mean())

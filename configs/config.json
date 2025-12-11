@@ -14,8 +14,8 @@
             "value_2": 128,
             "value_3": 128
         },
-        "embed": 64,
-        "feed": 256,
+        "embed": 32,
+        "feed": 128,
         "heads": 4,
         "token": 32,
         "layers": 6
@@ -52,7 +52,7 @@
                 "value_3": 128
             }
         },
-        "sequenceLength": 120
+        "sequenceLength": 40
     },
     "padding": {
         "messageType": null,
