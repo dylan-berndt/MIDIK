@@ -14,11 +14,11 @@
             "value_2": 128,
             "value_3": 128
         },
-        "embed": 32,
-        "feed": 128,
-        "heads": 4,
-        "token": 32,
-        "layers": 6
+        "embed": 512,
+        "feed": 2048,
+        "heads": 8,
+        "token": 64,
+        "layers": 8
     },
     "dataset": {
         "tokenizer": {
@@ -52,7 +52,7 @@
                 "value_3": 128
             }
         },
-        "sequenceLength": 40
+        "sequenceLength": 240
     },
     "padding": {
         "messageType": null,
@@ -68,7 +68,7 @@
         "value_2": 128,
         "value_3": 128
     },
-    "batchSize": 16,
-    "learningRate": 1e-3,
+    "batchSize": 96,
+    "learningRate": 3e-4,
     "epochs": 40
 }

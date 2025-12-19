@@ -15,10 +15,7 @@ from glob import glob
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
-
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-torch.set_default_device(DEVICE)
+os.environ["KAGGLEHUB_CACHE"] = "F:/.cache/kagglehub"
 
 
 def discreteTokenizerFactory(config):
@@ -196,9 +193,13 @@ class LakhData(Dataset):
                         json.dump(data, file)
                 except KeyboardInterrupt:
                     context.to_csv(os.path.join(location, "context.csv"))
-                    raise KeyboardInterrupt
+                    break
+                except TypeError:
+                    continue
 
                 print(f"\r{p + 1}/{len(missing)} MIDIs tokenized", end="")
+
+        print()
 
         self.context = context
         context.to_csv(os.path.join(location, "context.csv"))
@@ -209,7 +210,10 @@ class LakhData(Dataset):
 
         for t, tokenPath in enumerate(self.jsonPaths):
             with open(tokenPath, "r") as file:
-                data = json.load(file)
+                try:
+                    data = json.load(file)
+                except json.JSONDecodeError:
+                    continue
             if len(data["messageType"]) < self.config.sequenceLength:
                 continue
             self.tokens.append(data)
@@ -250,6 +254,30 @@ class LakhData(Dataset):
         collated = {"sequences": data}
 
         return collated
+
+    @staticmethod
+    def split(dataset, seed=1234, split=0.8):
+        np.random.seed(seed)
+        songIndices = np.arange(dataset.lengths.shape[0])
+        trainMask = np.random.uniform(size=[songIndices.shape[0]]) < split
+
+        samplesPerSong = np.clip(dataset.lengths - dataset.config.sequenceLength, 0, np.inf)
+        songSampleIndices = np.concat([[0], np.cumsum(samplesPerSong, axis=0)], axis=0).astype(int)
+
+        trainSongs = songIndices[trainMask]
+        testSongs = songIndices[~trainMask]
+
+        index = np.arange(len(dataset))
+        trainIndices = np.concat([index[songSampleIndices[song]:songSampleIndices[song + 1]]
+                                  for song in trainSongs], axis=0)
+        testIndices = np.concat([index[songSampleIndices[song]:songSampleIndices[song + 1]]
+                                for song in testSongs], axis=0)
+
+        # TODO: Test this
+        train = torch.utils.data.Subset(dataset, trainIndices)
+        test = torch.utils.data.Subset(dataset, testIndices)
+
+        return train, test
 
 
 class VGData(LakhData):

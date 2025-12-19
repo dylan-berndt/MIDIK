@@ -1,9 +1,5 @@
 import socket
-import tkinter as tk
-from tkinter import ttk
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 import numpy as np
 from datetime import datetime
 import math
@@ -24,13 +20,16 @@ class Client:
         self.socket.connect((host, port))
 
     def send(self, name, data):
-        self.socket.recv(4096)
-        collated = f" | {name}||{data}"
-        self.socket.sendall(bytes(collated, encoding='utf-8'))
+        try:
+            self.socket.recv(4096)
+            collated = f" | {name}||{data}"
+            self.socket.sendall(bytes(collated, encoding='utf-8'))
+        except BrokenPipeError:
+            pass
 
 
 class Server:
-    def __init__(self, port=12954):
+    def __init__(self, port=12945):
         self.data = {}
         self.time = {}
 
@@ -41,8 +40,6 @@ class Server:
 
         self.socket.listen(1)
         self.client = None
-
-        self.exit = False
 
         self.accept()
 
@@ -87,7 +84,7 @@ class DataGUI:
         self.server = server
         self.root = tk.Tk()
         self.root.title("Model Tracker")
-    
+
         self.frame = ttk.Frame(self.root)
         self.frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -112,10 +109,12 @@ class DataGUI:
         self.data_thread = threading.Thread(target=self.dataCollection, daemon=True)
         self.data_thread.start()
 
+        self.ordering = {}
+
         self.updatePlots()
 
     def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def dataCollection(self):
         while self.running:
@@ -161,13 +160,17 @@ class DataGUI:
         if not self.server.data:
             self.root.after(int(DISPLAY_REFRESH * 1000), self.updatePlots)
             return
-        
+
         currentDataSeries = set(self.server.data.keys())
         existingPlots = set(self.plots.keys())
 
         for key in currentDataSeries - existingPlots:
-            row = len(self.plots)
-            col = 0
+            seriesName = " ".join(key.split(" ")[1:])
+            if seriesName not in self.ordering:
+                self.ordering[seriesName] = len(self.ordering)
+            row = self.ordering[seriesName]
+
+            col = 0 if key.startswith("Train") else 1
             self.plots[key] = self.createPlot(key, row, col)
             self.canvas.update_idletasks()
 
@@ -192,7 +195,7 @@ class DataGUI:
                 display = datum[len(datum) - (MAX_DISPLAY_POINTS + 1):]
                 ax2.plot(points, display, label=name, alpha=0.7)
                 ax2.axhline(np.mean(display), linestyle='--', color='orange')
-            
+
             ax1.legend()
             ax2.legend()
 
@@ -208,6 +211,11 @@ class DataGUI:
 
 
 if __name__ == "__main__":
+    import tkinter as tk
+    from tkinter import ttk
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+
     while True:
         server = Server(port=12945)
         gui = DataGUI(server)
