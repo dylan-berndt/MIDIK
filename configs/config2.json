@@ -1,0 +1,75 @@
+{
+    "model": {
+        "ranges": {
+            "messageType": 16,
+            "channel": 16,
+            "note": 128,
+            "velocity": 128,
+            "pitch": 2048,
+            "time": 1024,
+            "duration": 2048,
+            "control": 128,
+            "program": 128,
+            "value_1": 128,
+            "value_2": 128,
+            "value_3": 128
+        },
+        "embed": 32,
+        "state": 64,
+        "conv": 4,
+        "expand": 2,
+        "token": 32,
+        "layers": 6
+    },
+    "dataset": {
+        "tokenizer": {
+            "minTimeResolution": 32,
+            "ranges": {
+                "messageType": 16,
+                "channel": 16,
+                "note": 128,
+                "velocity": 128,
+                "pitch": 2048,
+                "time": 1024,
+                "duration": 2048,
+                "control": 128,
+                "program": 128,
+                "value_1": 128,
+                "value_2": 128,
+                "value_3": 128
+            },
+            "padding": {
+                "messageType": null,
+                "channel": null,
+                "note": 128,
+                "velocity": 128,
+                "pitch": 2048,
+                "time": null,
+                "duration": 0,
+                "control": 128,
+                "program": 128,
+                "value_1": 128,
+                "value_2": 128,
+                "value_3": 128
+            }
+        },
+        "sequenceLength": 1200
+    },
+    "padding": {
+        "messageType": null,
+        "channel": null,
+        "note": 128,
+        "velocity": 128,
+        "pitch": 2048,
+        "time": null,
+        "duration": 0,
+        "control": 128,
+        "program": 128,
+        "value_1": 128,
+        "value_2": 128,
+        "value_3": 128
+    },
+    "batchSize": 32,
+    "learningRate": 1e-3,
+    "epochs": 40
+}

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 import math
+from mamba_ssm import Mamba2
 
 
 class RotaryEncoding(nn.Module):
@@ -79,6 +80,52 @@ class MIDIK(nn.Module):
             #     use_reentrant=True
             # )
             output = wrap(l)(output)
+
+        x = self.norm(output)
+        outputs = {key: value(x) for key, value in self.heads.items()}
+
+        return outputs
+
+
+class MIDIK2(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+
+        self.embedding = nn.ModuleDict({key: nn.Embedding(val + 1, config.token) for key, val in config.ranges.items()})
+
+        self.squeeze = nn.Sequential(
+            nn.Linear(len(config.ranges.keys()) * config.token, config.embed * 2),
+            nn.ReLU(),
+            nn.Linear(config.embed * 2, config.embed)
+        )
+
+        encoder = lambda x: Mamba2(config.embed, config.state, config.conv, config.expand)
+
+        self.layers = nn.ModuleList([encoder(_) for _ in range(config.layers)])
+        self.norm = nn.LayerNorm(config.embed)
+
+        self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val + 1) for key, val in config.ranges.items()})
+
+    def forward(self, inputs, context=None):
+        x = None
+        for key in inputs:
+            # print(key, torch.amax(inputs[key]))
+            embed = self.embedding[key](inputs[key])
+            embed[inputs[key] == self.config.ranges[key]] = 0
+            if x is None:
+                x = embed
+            else:
+                x = torch.cat([x, embed], dim=-1)
+
+        # print(x.shape)
+
+        x = self.squeeze(x)
+
+        output = x
+        for l in self.layers:
+            output = l(output)
 
         x = self.norm(output)
         outputs = {key: value(x) for key, value in self.heads.items()}
