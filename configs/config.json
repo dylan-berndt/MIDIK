@@ -18,7 +18,8 @@
         "feed": 2048,
         "heads": 8,
         "token": 64,
-        "layers": 8
+        "layers": 8,
+        "independent": false
     },
     "dataset": {
         "tokenizer": {

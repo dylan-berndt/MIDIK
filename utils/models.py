@@ -24,6 +24,99 @@ class RotaryEncoding(nn.Module):
         else:
             x = x + self.pe[:x.size(1)].permute(1, 0, 2)
         return self.dropout(x)
+    
+
+class LearnedPositional(nn.Module):
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 1e4, batch_first=False):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.batch_first = batch_first
+
+        self.embeddings = nn.Parameter(torch.randn(int(max_len), 1, d_model))
+
+    def forward(self, x):
+        if not self.batch_first:
+            x = x + self.embeddings[:x.size(0)]
+        else:
+            x = x + self.embeddings[:x.size(1)].permute(1, 0, 2)
+        return self.dropout(x)
+    
+
+class Head(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+        if config.independent:
+            self.heads = nn.ModuleDict(
+                {key: nn.Sequential(
+                    nn.Linear(config.embed, config.embed * 2),
+                    nn.ReLU(),
+                    nn.Linear(config.embed * 2, val + 1)
+                    ) for key, val in config.ranges.items()}
+            )
+        else:
+            self.sizes = {key: val + 1 for key, val in config.ranges.items()}
+            self.totalTokens = sum(self.sizes.values())
+            self.head = nn.Sequential(
+                nn.Linear(config.embed, config.embed * 2),
+                nn.ReLU(),
+                nn.Linear(config.embed * 2, self.total_out)
+            )
+
+            self.slices = {}
+            start = 0
+            for key, size in self.sizes.items():
+                self.slices[key] = (start, start + size)
+                start += size
+
+    def forward(self, x):
+        if self.config.independent:
+            outputs = {key: value(x) for key, value in self.heads.items()}
+        else:
+            logits = self.head(x)
+
+            outputs = {}
+            for key, (start, end) in self.slices.items():
+                outputs[key] = logits[..., start:end]
+
+        return outputs
+    
+
+class MIDIK0(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+        self.config = config
+
+        self.embedding = nn.ModuleDict({key: nn.Embedding(val + 1, config.token) for key, val in config.ranges.items()})
+
+        self.squeeze = nn.Sequential(
+            nn.Linear(len(config.ranges.keys()) * config.token, config.embed * 2),
+            nn.ReLU(),
+            nn.Linear(config.embed * 2, config.embed)
+        )
+
+        self.lstm = nn.LSTM(config.embed, config.embed, config.layers, batch_first=True)
+
+        self.head = Head(config)
+
+    def forward(self, inputs, context=None):
+        x = None
+        for key in inputs:
+            embed = self.embedding[key](inputs[key])
+            embed[inputs[key] == self.config.ranges[key]] = 0
+            if x is None:
+                x = embed
+            else:
+                x = torch.cat([x, embed], dim=-1)
+
+        x = self.squeeze(x)
+
+        x, _ = self.lstm(x)
+
+        outputs = self.head(x)
+        return outputs
 
 
 class MIDIK(nn.Module):
@@ -40,14 +133,14 @@ class MIDIK(nn.Module):
             nn.Linear(config.embed * 2, config.embed)
         )
 
-        self.positional = RotaryEncoding(config.embed, max_len=4e4, batch_first=True)
+        self.positional = LearnedPositional(config.embed, max_len=4e4, batch_first=True)
 
         encoder = lambda x: nn.TransformerEncoderLayer(config.embed, config.heads, config.feed, batch_first=True)
 
         self.layers = nn.ModuleList([encoder(_) for _ in range(config.layers)])
         self.norm = nn.LayerNorm(config.embed)
 
-        self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val + 1) for key, val in config.ranges.items()})
+        self.head = Head(config)
 
     def forward(self, inputs, context=None):
         x = None
@@ -82,7 +175,7 @@ class MIDIK(nn.Module):
             output = wrap(l)(output)
 
         x = self.norm(output)
-        outputs = {key: value(x) for key, value in self.heads.items()}
+        outputs = self.head(x)
 
         return outputs
 
@@ -106,7 +199,7 @@ class MIDIK2(nn.Module):
         self.layers = nn.ModuleList([encoder(_) for _ in range(config.layers)])
         self.norm = nn.LayerNorm(config.embed)
 
-        self.heads = nn.ModuleDict({key: nn.Linear(config.embed, val + 1) for key, val in config.ranges.items()})
+        self.head = Head(config)
 
     def forward(self, inputs, context=None):
         x = None
@@ -128,7 +221,7 @@ class MIDIK2(nn.Module):
             output = l(output)
 
         x = self.norm(output)
-        outputs = {key: value(x) for key, value in self.heads.items()}
+        outputs = self.head(x)
 
         return outputs
 

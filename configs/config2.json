@@ -19,7 +19,8 @@
         "conv": 4,
         "expand": 2,
         "token": 32,
-        "layers": 6
+        "layers": 6,
+        "independent": false
     },
     "dataset": {
         "tokenizer": {
